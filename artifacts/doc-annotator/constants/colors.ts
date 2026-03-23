@@ -1,0 +1,32 @@
+const tintColor = "#F59E0B";
+
+export default {
+  light: {
+    text: "#0F172A",
+    textSecondary: "#64748B",
+    textTertiary: "#94A3B8",
+    background: "#F8FAFC",
+    surface: "#FFFFFF",
+    surfaceElevated: "#FFFFFF",
+    border: "#E2E8F0",
+    borderLight: "#F1F5F9",
+    tint: tintColor,
+    tintLight: "#FEF3C7",
+    tintDim: "#D97706",
+    destructive: "#EF4444",
+    destructiveLight: "#FEE2E2",
+    success: "#10B981",
+    navy: "#1E3A5F",
+    navyLight: "#2D4E7B",
+    tabIconDefault: "#94A3B8",
+    tabIconSelected: tintColor,
+    notePin: "#F59E0B",
+    notePinText: "#78350F",
+    noteBackground: "#FFFBEB",
+    noteBorder: "#FDE68A",
+    documentBackground: "#F0F4FF",
+    documentLines: "#E2E8F0",
+    headerBackground: "#1E3A5F",
+    headerText: "#FFFFFF",
+  },
+};
