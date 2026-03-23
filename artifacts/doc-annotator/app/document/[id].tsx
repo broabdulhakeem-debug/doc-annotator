@@ -1,10 +1,12 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
-  Animated,
-  FlatList,
+  ActivityIndicator,
+  Alert,
+  Image,
   Keyboard,
   Modal,
   Platform,
@@ -29,6 +31,105 @@ const NOTE_COLORS = [
   { bg: "#FFF1F2", border: "#FECDD3", pin: "#EF4444", label: "Red" },
 ];
 
+async function pickImage(source: "camera" | "library"): Promise<string | null> {
+  if (source === "camera") {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Camera access is required to scan documents.");
+      return null;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: "images",
+      allowsEditing: true,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) return result.assets[0].uri;
+  } else {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Photo library access is required to import documents.");
+      return null;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: "images",
+      allowsEditing: true,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) return result.assets[0].uri;
+  }
+  return null;
+}
+
+function ScanOptionsModal({
+  visible,
+  hasScan,
+  onCamera,
+  onLibrary,
+  onRemove,
+  onClose,
+}: {
+  visible: boolean;
+  hasScan: boolean;
+  onCamera: () => void;
+  onLibrary: () => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.scanOverlay} onPress={onClose}>
+        <Pressable style={styles.scanSheet} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.scanHandle} />
+          <Text style={styles.scanTitle}>Scan Document</Text>
+          <Text style={styles.scanSubtitle}>
+            Replace the placeholder page with a real photo of your document
+          </Text>
+
+          <Pressable style={styles.scanOption} onPress={onCamera}>
+            <View style={[styles.scanOptionIcon, { backgroundColor: "#EFF6FF" }]}>
+              <Feather name="camera" size={20} color="#3B82F6" />
+            </View>
+            <View style={styles.scanOptionText}>
+              <Text style={styles.scanOptionTitle}>Use Camera</Text>
+              <Text style={styles.scanOptionDesc}>Take a new photo of your document</Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
+          </Pressable>
+
+          <Pressable style={styles.scanOption} onPress={onLibrary}>
+            <View style={[styles.scanOptionIcon, { backgroundColor: "#F0FDF4" }]}>
+              <Feather name="image" size={20} color="#10B981" />
+            </View>
+            <View style={styles.scanOptionText}>
+              <Text style={styles.scanOptionTitle}>Choose from Library</Text>
+              <Text style={styles.scanOptionDesc}>Import an existing image or scan</Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
+          </Pressable>
+
+          {hasScan && (
+            <Pressable style={[styles.scanOption, styles.scanOptionDestructive]} onPress={onRemove}>
+              <View style={[styles.scanOptionIcon, { backgroundColor: Colors.light.destructiveLight }]}>
+                <Feather name="trash-2" size={20} color={Colors.light.destructive} />
+              </View>
+              <View style={styles.scanOptionText}>
+                <Text style={[styles.scanOptionTitle, { color: Colors.light.destructive }]}>
+                  Remove Scan
+                </Text>
+                <Text style={styles.scanOptionDesc}>Revert to placeholder view</Text>
+              </View>
+            </Pressable>
+          )}
+
+          <Pressable style={styles.scanCancelBtn} onPress={onClose}>
+            <Text style={styles.scanCancelText}>Cancel</Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 function DocumentPage({
   page,
   pageIndex,
@@ -44,11 +145,18 @@ function DocumentPage({
 }) {
   const [layout, setLayout] = useState({ width: 1, height: 1 });
   const lineCount = 18;
+  const hasScan = !!page.scanUri;
 
   return (
     <View style={styles.pageContainer}>
       <View style={styles.pageHeader}>
         <Text style={styles.pageLabel}>Page {pageIndex + 1}</Text>
+        {hasScan && (
+          <View style={[styles.pageNoteBadge, { backgroundColor: "#EFF6FF" }]}>
+            <Feather name="camera" size={10} color="#3B82F6" />
+            <Text style={[styles.pageNoteBadgeText, { color: "#3B82F6" }]}>Scanned</Text>
+          </View>
+        )}
         {page.notes.length > 0 && (
           <View style={styles.pageNoteBadge}>
             <Feather name="message-square" size={10} color={Colors.light.tintDim} />
@@ -60,9 +168,7 @@ function DocumentPage({
       <TouchableWithoutFeedback
         onPress={(e) => {
           const { locationX, locationY } = e.nativeEvent;
-          const x = locationX / layout.width;
-          const y = locationY / layout.height;
-          onTap(x, y);
+          onTap(locationX / layout.width, locationY / layout.height);
         }}
       >
         <View
@@ -72,27 +178,35 @@ function DocumentPage({
             setLayout({ width, height });
           }}
         >
-          <View style={[styles.pageStripe, { backgroundColor: docColor }]} />
-
-          {Array.from({ length: lineCount }, (_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.docLine,
-                {
-                  width: i === 0 ? "60%" : i % 5 === 4 ? "40%" : "100%",
-                  backgroundColor:
-                    i === 0 ? Colors.light.navyLight + "20" : Colors.light.documentLines,
-                  height: i === 0 ? 10 : 6,
-                  marginBottom: i === 0 ? 12 : 8,
-                },
-              ]}
+          {hasScan ? (
+            <Image
+              source={{ uri: page.scanUri }}
+              style={styles.scanImage}
+              resizeMode="cover"
             />
-          ))}
+          ) : (
+            <>
+              <View style={[styles.pageStripe, { backgroundColor: docColor }]} />
+              {Array.from({ length: lineCount }, (_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.docLine,
+                    {
+                      width: i === 0 ? "60%" : i % 5 === 4 ? "40%" : "100%",
+                      backgroundColor:
+                        i === 0 ? Colors.light.navyLight + "20" : Colors.light.documentLines,
+                      height: i === 0 ? 10 : 6,
+                      marginBottom: i === 0 ? 12 : 8,
+                    },
+                  ]}
+                />
+              ))}
+            </>
+          )}
 
           {page.notes.map((note) => {
-            const colorScheme =
-              NOTE_COLORS.find((c) => c.pin === note.color) || NOTE_COLORS[0];
+            const colorScheme = NOTE_COLORS.find((c) => c.pin === note.color) || NOTE_COLORS[0];
             return (
               <Pressable
                 key={note.id}
@@ -117,6 +231,13 @@ function DocumentPage({
               </Pressable>
             );
           })}
+
+          {!hasScan && (
+            <View style={styles.scanPrompt} pointerEvents="none">
+              <Feather name="camera" size={14} color={Colors.light.textTertiary} />
+              <Text style={styles.scanPromptText}>Tap scan to add your document</Text>
+            </View>
+          )}
         </View>
       </TouchableWithoutFeedback>
     </View>
@@ -186,7 +307,7 @@ function AddNoteModal({
   const [selectedColor, setSelectedColor] = useState(NOTE_COLORS[0].pin);
   const inputRef = useRef<TextInput>(null);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (visible) {
       setText("");
       setSelectedColor(NOTE_COLORS[0].pin);
@@ -238,7 +359,6 @@ function AddNoteModal({
             onChangeText={setText}
             multiline
             maxLength={200}
-            returnKeyType="done"
           />
 
           <View style={styles.addNoteActions}>
@@ -262,7 +382,7 @@ function AddNoteModal({
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { documents, addNote } = useDocuments();
+  const { documents, addNote, updatePageScan } = useDocuments();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
@@ -272,41 +392,53 @@ export default function DocumentScreen() {
   const [pendingTap, setPendingTap] = useState<{ pageId: string; x: number; y: number } | null>(null);
   const [selectedNote, setSelectedNote] = useState<{ note: Note; pageId: string } | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [scanModalVisible, setScanModalVisible] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
 
   useLayoutEffect(() => {
     if (!doc) return;
-    navigation.setOptions({
-      title: doc.title,
-      headerRight: () => (
-        <View style={{ flexDirection: "row", gap: 16, marginRight: 4 }}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          />
-        </View>
-      ),
-    });
+    navigation.setOptions({ title: doc.title });
   }, [doc, navigation]);
 
-  const handlePageTap = useCallback(
-    (pageId: string, x: number, y: number) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      setPendingTap({ pageId, x, y });
-      setAddNoteVisible(true);
-    },
-    []
-  );
+  const handlePageTap = useCallback((pageId: string, x: number, y: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setPendingTap({ pageId, x, y });
+    setAddNoteVisible(true);
+  }, []);
 
   async function handleAddNote(text: string, color: string) {
     if (!pendingTap || !doc) return;
-    await addNote(doc.id, pendingTap.pageId, {
-      text,
-      x: pendingTap.x,
-      y: pendingTap.y,
-      color,
-    });
+    await addNote(doc.id, pendingTap.pageId, { text, x: pendingTap.x, y: pendingTap.y, color });
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setPendingTap(null);
+  }
+
+  async function handleScanSource(source: "camera" | "library") {
+    if (!doc) return;
+    setScanModalVisible(false);
+    setIsScanning(true);
+    try {
+      const uri = await pickImage(source);
+      if (uri) {
+        const pageId = doc.pages[currentPage]?.id;
+        if (pageId) {
+          await updatePageScan(doc.id, pageId, uri);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
+    } finally {
+      setIsScanning(false);
+    }
+  }
+
+  async function handleRemoveScan() {
+    if (!doc) return;
+    setScanModalVisible(false);
+    const pageId = doc.pages[currentPage]?.id;
+    if (pageId) {
+      await updatePageScan(doc.id, pageId, undefined);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    }
   }
 
   if (!doc) {
@@ -322,6 +454,8 @@ export default function DocumentScreen() {
   }
 
   const totalNotes = doc.pages.reduce((sum, p) => sum + p.notes.length, 0);
+  const currentPageData = doc.pages[currentPage];
+  const currentPageHasScan = !!currentPageData?.scanUri;
 
   return (
     <View style={[styles.container, { backgroundColor: Colors.light.documentBackground }]}>
@@ -353,10 +487,7 @@ export default function DocumentScreen() {
         scrollEventThrottle={16}
       >
         {doc.pages.map((page, i) => (
-          <View
-            key={page.id}
-            style={{ width: Platform.OS === "web" ? "100%" : undefined }}
-          >
+          <View key={page.id} style={Platform.OS !== "web" ? undefined : { width: "100%" }}>
             <DocumentPage
               page={page}
               pageIndex={i}
@@ -369,29 +500,57 @@ export default function DocumentScreen() {
       </ScrollView>
 
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
-        <View style={styles.pageDotsRow}>
-          {doc.pages.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.pageDot,
-                i === currentPage && styles.pageDotActive,
-              ]}
-            />
-          ))}
+        <View style={styles.bottomBarTop}>
+          <View style={styles.pageDotsRow}>
+            {doc.pages.map((_, i) => (
+              <View
+                key={i}
+                style={[styles.pageDot, i === currentPage && styles.pageDotActive]}
+              />
+            ))}
+          </View>
+
+          <Pressable
+            style={[styles.scanBtn, currentPageHasScan && styles.scanBtnActive]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              setScanModalVisible(true);
+            }}
+            disabled={isScanning}
+          >
+            {isScanning ? (
+              <ActivityIndicator size="small" color={currentPageHasScan ? Colors.light.navy : Colors.light.textSecondary} />
+            ) : (
+              <Feather
+                name={currentPageHasScan ? "camera" : "camera"}
+                size={15}
+                color={currentPageHasScan ? Colors.light.navy : Colors.light.textSecondary}
+              />
+            )}
+            <Text style={[styles.scanBtnText, currentPageHasScan && styles.scanBtnTextActive]}>
+              {isScanning ? "Scanning..." : currentPageHasScan ? "Rescan" : "Scan Page"}
+            </Text>
+          </Pressable>
         </View>
+
         <Text style={styles.tapHint}>
           <Feather name="crosshair" size={12} color={Colors.light.textTertiary} />
           {"  "}Tap anywhere on the page to add an annotation
         </Text>
       </View>
 
+      <ScanOptionsModal
+        visible={scanModalVisible}
+        hasScan={currentPageHasScan}
+        onCamera={() => handleScanSource("camera")}
+        onLibrary={() => handleScanSource("library")}
+        onRemove={handleRemoveScan}
+        onClose={() => setScanModalVisible(false)}
+      />
+
       <AddNoteModal
         visible={addNoteVisible}
-        onClose={() => {
-          setAddNoteVisible(false);
-          setPendingTap(null);
-        }}
+        onClose={() => { setAddNoteVisible(false); setPendingTap(null); }}
         onAdd={handleAddNote}
       />
 
@@ -410,9 +569,7 @@ export default function DocumentScreen() {
 const PAGE_WIDTH = Platform.OS === "web" ? 600 : 320;
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   notFoundText: {
     fontFamily: "Inter_500Medium",
     fontSize: 16,
@@ -471,9 +628,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "rgba(255,255,255,0.9)",
   },
-  pagesScroll: {
-    flex: 1,
-  },
+  pagesScroll: { flex: 1 },
   pagesContent: {
     paddingVertical: 20,
     paddingHorizontal: 20,
@@ -482,7 +637,6 @@ const styles = StyleSheet.create({
   },
   pageContainer: {
     width: PAGE_WIDTH,
-    marginHorizontal: 0,
   },
   pageHeader: {
     flexDirection: "row",
@@ -526,6 +680,25 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
+  scanImage: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 12,
+  },
+  scanPrompt: {
+    position: "absolute",
+    bottom: 16,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  scanPromptText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.light.textTertiary,
+  },
   pageStripe: {
     position: "absolute",
     left: 0,
@@ -535,9 +708,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 12,
     borderBottomLeftRadius: 12,
   },
-  docLine: {
-    borderRadius: 3,
-  },
+  docLine: { borderRadius: 3 },
   notePin: {
     position: "absolute",
     maxWidth: 130,
@@ -550,9 +721,9 @@ const styles = StyleSheet.create({
     gap: 5,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 3,
-    elevation: 2,
+    elevation: 3,
     zIndex: 10,
   },
   notePinDot: {
@@ -575,8 +746,12 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.light.border,
     paddingTop: 12,
     paddingHorizontal: 20,
-    alignItems: "center",
     gap: 8,
+  },
+  bottomBarTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   pageDotsRow: {
     flexDirection: "row",
@@ -593,10 +768,34 @@ const styles = StyleSheet.create({
     width: 20,
     backgroundColor: Colors.light.navy,
   },
+  scanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: Colors.light.borderLight,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  scanBtnActive: {
+    backgroundColor: Colors.light.tintLight,
+    borderColor: Colors.light.tint,
+  },
+  scanBtnText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
+    color: Colors.light.textSecondary,
+  },
+  scanBtnTextActive: {
+    color: Colors.light.navy,
+  },
   tapHint: {
     fontFamily: "Inter_400Regular",
     fontSize: 12,
     color: Colors.light.textTertiary,
+    textAlign: "center",
   },
   noteModalOverlay: {
     flex: 1,
@@ -776,5 +975,90 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     fontSize: 15,
     color: "#fff",
+  },
+  scanOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  scanSheet: {
+    backgroundColor: Colors.light.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingTop: 12,
+    gap: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  scanHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: Colors.light.border,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 12,
+  },
+  scanTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 20,
+    color: Colors.light.text,
+    marginBottom: 2,
+  },
+  scanSubtitle: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.light.textSecondary,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  scanOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.borderLight,
+  },
+  scanOptionDestructive: {
+    borderBottomWidth: 0,
+    marginTop: 4,
+  },
+  scanOptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanOptionText: {
+    flex: 1,
+    gap: 2,
+  },
+  scanOptionTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 15,
+    color: Colors.light.text,
+  },
+  scanOptionDesc: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.light.textSecondary,
+  },
+  scanCancelBtn: {
+    marginTop: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.light.borderLight,
+    alignItems: "center",
+  },
+  scanCancelText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 15,
+    color: Colors.light.textSecondary,
   },
 });

@@ -19,6 +19,7 @@ export type Note = {
 export type Page = {
   id: string;
   notes: Note[];
+  scanUri?: string;
 };
 
 export type Document = {
@@ -39,6 +40,7 @@ type DocumentsContextType = {
   updateDocument: (doc: Document) => Promise<void>;
   addNote: (docId: string, pageId: string, note: Omit<Note, "id" | "createdAt">) => Promise<void>;
   deleteNote: (docId: string, pageId: string, noteId: string) => Promise<void>;
+  updatePageScan: (docId: string, pageId: string, uri: string | undefined) => Promise<void>;
 };
 
 const DocumentsContext = createContext<DocumentsContextType | null>(null);
@@ -176,6 +178,24 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
     [documents]
   );
 
+  const updatePageScan = useCallback(
+    async (docId: string, pageId: string, uri: string | undefined) => {
+      const updated = documents.map((doc) => {
+        if (doc.id !== docId) return doc;
+        return {
+          ...doc,
+          updatedAt: Date.now(),
+          pages: doc.pages.map((page) => {
+            if (page.id !== pageId) return page;
+            return { ...page, scanUri: uri };
+          }),
+        };
+      });
+      await persist(updated);
+    },
+    [documents]
+  );
+
   return (
     <DocumentsContext.Provider
       value={{
@@ -186,6 +206,7 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
         updateDocument,
         addNote,
         deleteNote,
+        updatePageScan,
       }}
     >
       {children}

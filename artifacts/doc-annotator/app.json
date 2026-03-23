@@ -14,7 +14,11 @@
       "backgroundColor": "#1E3A5F"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to scan and photograph documents for annotation.",
+        "NSPhotoLibraryUsageDescription": "Used to import document images for annotation."
+      }
     },
     "android": {},
     "web": {
